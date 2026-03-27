@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:http/http.dart' as http;
 import 'QRScannerPage.dart';
 
@@ -231,6 +232,10 @@ class EventDetailPage extends StatefulWidget {
 class _EventDetailPageState extends State<EventDetailPage> {
   Map<String, dynamic>? scannedDetails;
   List<Map<String, dynamic>> attendanceRecords = [];
+  int _attendancePage = 0;
+  final int _attendancePageSize = 30;
+  bool _isLoadingMore = false;
+  bool _showAttendance = false;
   List<Map<String, dynamic>> subevents = [];
   bool loadingSubevents = true;
 
@@ -292,6 +297,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
                     attendanceRecords = (jsonResponse['data'] as List)
                         .cast<Map<String, dynamic>>();
                 });
+                _resetAttendancePagination();
             } else {
                 print('Error in response: ${jsonResponse['message']}');
             }
@@ -337,8 +343,33 @@ class _EventDetailPageState extends State<EventDetailPage> {
       setState(() {
         attendanceRecords = allAttendance;
       });
+      _resetAttendancePagination();
     } catch (e) {
       print('Error fetching subevent attendance: $e');
+    }
+  }
+
+  void _resetAttendancePagination() {
+    setState(() {
+      _attendancePage = 0;
+      _isLoadingMore = false;
+    });
+  }
+
+  void _loadMoreAttendance() {
+    final total = attendanceRecords.length;
+    if (total == 0) return;
+    final maxPages = (total / _attendancePageSize).ceil();
+    if (_attendancePage + 1 < maxPages && !_isLoadingMore) {
+      setState(() {
+        _isLoadingMore = true;
+        _attendancePage++;
+      });
+      Future.delayed(const Duration(milliseconds: 300), () {
+        setState(() {
+          _isLoadingMore = false;
+        });
+      });
     }
   }
 
@@ -691,123 +722,186 @@ class _EventDetailPageState extends State<EventDetailPage> {
       appBar: AppBar(title: Text(event['title'] ?? 'Event Detail')),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (event['image'] != null && event['image'].toString().isNotEmpty)
-              Center(
-                child: Image.memory(
-                  base64Decode(event['image'].toString().replaceFirst(RegExp(r'data:image/[^;]+;base64,'), '')),
-                  width: 200,
-                  height: 200,
-                  fit: BoxFit.cover,
-                ),
-              ),
-            const SizedBox(height: 12),
-            Text(event['description']?.toString() ?? '', style: const TextStyle(fontSize: 16)),
-            const SizedBox(height: 8),
-            Text('Date: ${event['date']}  Time: ${event['time']}'),
-            Text('Location: ${event['location']}'),
-            Text('Status: ${event['status']}'),
-            const SizedBox(height: 16),
-
-            if (loadingSubevents)
-              const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: Text('Loading subevents...'))
-            else if (subevents.isNotEmpty) ...[
-              const Text('Sub-events:', style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              SizedBox(
-                height: 140,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: subevents.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
-                  itemBuilder: (context, i) {
-                    final s = subevents[i];
-                    return Card(
-                      child: Container(
-                        width: 260,
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(s['title']?.toString() ?? 'Untitled', style: const TextStyle(fontWeight: FontWeight.bold)),
-                            const SizedBox(height: 6),
-                            Text('Points: ${s['points'] ?? '0'}'),
-                            const Spacer(),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: ElevatedButton.icon(
-                                    icon: const Icon(Icons.qr_code_scanner),
-                                    label: const Text('Scan for this subevent'),
-                                    onPressed: () => _scanForSubevent(s),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
+        child: NotificationListener<ScrollNotification>(
+          onNotification: (scrollNotification) {
+            if (scrollNotification is ScrollUpdateNotification) {
+              final metrics = scrollNotification.metrics;
+              if (metrics.pixels >= metrics.maxScrollExtent - 200) {
+                _loadMoreAttendance();
+              }
+            }
+            return false;
+          },
+          child: CustomScrollView(
+            slivers: [
+            SliverToBoxAdapter(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (event['image'] != null && event['image'].toString().isNotEmpty)
+                    Center(
+                      child: Image.memory(
+                        base64Decode(event['image'].toString().replaceFirst(RegExp(r'data:image/[^;]+;base64,'), '')),
+                        width: 200,
+                        height: 200,
+                        fit: BoxFit.cover,
                       ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 12),
-            ],
-
-            const Text('Attendance:', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Expanded(
-              child: attendanceRecords.isEmpty
-                  ? const Text('No attendance records yet.')
-                  : ListView(
-                      children: attendanceRecords.map((record) {
-                        final userId = record['user_id'] ?? '';
-                        final userName = record['full_name'] ?? '';
-                        final timestamp = record['attended_at'] ?? '';
-                        
-                        return Card(
-                          child: ListTile(
-                            title: Text(userName),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('User ID: $userId'),
-                                Text('Full Name: $userName'), 
-                                if (timestamp.isNotEmpty) Text('Time: $timestamp'),
-                              ],
-                            ),
-                          ),
-                        );
-                      }).toList(),
                     ),
+                  const SizedBox(height: 12),
+                  Text(event['description']?.toString() ?? '', style: const TextStyle(fontSize: 16)),
+                  const SizedBox(height: 8),
+                  Text('Date: ${event['date']}  Time: ${event['time']}'),
+                  Text('Location: ${event['location']}'),
+                  Text('Status: ${event['status']}'),
+                  const SizedBox(height: 16),
+
+                  if (loadingSubevents)
+                    const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: Text('Loading subevents...'))
+                  else if (subevents.isNotEmpty) ...[
+                    const Text('Sub-events:', style: TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      height: 140,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: subevents.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 8),
+                        itemBuilder: (context, i) {
+                          final s = subevents[i];
+                          return Card(
+                            child: Container(
+                              width: 260,
+                              padding: const EdgeInsets.all(12),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(s['title']?.toString() ?? 'Untitled', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                  const SizedBox(height: 6),
+                                  Text('Points: ${s['points'] ?? '0'}'),
+                                  const Spacer(),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: ElevatedButton.icon(
+                                          icon: const Icon(Icons.qr_code_scanner),
+                                          label: const Text('Scan for this subevent'),
+                                          onPressed: () => _scanForSubevent(s),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Attendance:', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ElevatedButton(
+                        onPressed: () => setState(() => _showAttendance = !_showAttendance),
+                        child: Text(_showAttendance ? 'Hide Attendance' : 'Show Attendance (${attendanceRecords.length})'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              ),
             ),
 
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.qr_code_scanner),
-                label: const Text('Scan QR for Event Attendance'),
-                onPressed: () async {
-                  final result = await Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const QRScannerPage()),
-                  );
-                  if (result != null) {
-                    final parsed = _parseScannedResult(result);
-                    setState(() {
-                      scannedDetails = parsed;
-                    });
-                    await _handleAttendance(parsed);
-                  }
-                },
+            if (!_showAttendance) ...[
+              SliverToBoxAdapter(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12.0),
+                    child: Text('Attendance hidden. Tap "Show Attendance" to view.'),
+                  ),
+                ),
+              ),
+            ] else ...[
+              if (attendanceRecords.isEmpty) ...[
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(child: Text('No attendance records yet.')),
+                ),
+              ] else ...[
+                SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final record = attendanceRecords[index];
+                      final userId = record['user_id'] ?? '';
+                      final userName = record['full_name'] ?? '';
+                      final timestamp = record['attended_at'] ?? '';
+
+                      return Card(
+                        margin: const EdgeInsets.symmetric(vertical: 4),
+                        child: ListTile(
+                          title: Text(userName),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('User ID: $userId'),
+                              Text('Full Name: $userName'),
+                              if (timestamp.toString().isNotEmpty) Text('Time: $timestamp'),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                    childCount: math.min(attendanceRecords.length, (_attendancePage + 1) * _attendancePageSize),
+                  ),
+                ),
+              ],
+            ],
+
+            if (_showAttendance) SliverToBoxAdapter(
+              child: Center(
+                child: _isLoadingMore
+                    ? const Padding(
+                        padding: EdgeInsets.all(8.0),
+                        child: CircularProgressIndicator(),
+                      )
+                    : (attendanceRecords.length > ((_attendancePage + 1) * _attendancePageSize))
+                        ? TextButton(
+                            onPressed: _loadMoreAttendance,
+                            child: const Text('Load more'),
+                          )
+                        : const SizedBox.shrink(),
+              ),
+            ),
+
+            SliverToBoxAdapter(
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.qr_code_scanner),
+                  label: const Text('Scan QR for Event Attendance'),
+                  onPressed: () async {
+                    final result = await Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const QRScannerPage()),
+                    );
+                    if (result != null) {
+                      final parsed = _parseScannedResult(result);
+                      setState(() {
+                        scannedDetails = parsed;
+                      });
+                      await _handleAttendance(parsed);
+                    }
+                  },
+                ),
               ),
             ),
           ],
         ),
       ),
+    ),
     );
   }
 }
